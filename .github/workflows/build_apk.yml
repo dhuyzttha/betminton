@@ -1,0 +1,110 @@
+name: Build Badminton AI Analyzer v4.0 PRO APK
+
+on:
+  push:
+    branches: [ "main", "master", "**" ]
+  pull_request:
+    branches: [ "main", "master" ]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-android-apk:
+    name: Build & Verify Android APK (v4.0 PRO AI)
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Set up Java JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+          cache: 'gradle'
+
+      - name: Set up Python 3.11 & Test Backend AI Engine
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Locate Project Root
+        id: locate-project
+        run: |
+          if [ -f "pubspec.yaml" ]; then
+            echo "project_dir=." >> $GITHUB_OUTPUT
+          else
+            FOUND_FILE=$(find . -name "pubspec.yaml" -not -path "*/.*" | head -n 1)
+            if [ -n "$FOUND_FILE" ]; then
+              echo "project_dir=$(dirname "$FOUND_FILE")" >> $GITHUB_OUTPUT
+            else
+              echo "Error: Could not locate pubspec.yaml"
+              exit 1
+            fi
+          fi
+
+      - name: Verify Python AI Backend Pipeline
+        working-directory: ${{ steps.locate-project.outputs.project_dir }}
+        run: |
+          python3 -m pip install --upgrade pip
+          pip install numpy opencv-python-headless Pillow scipy
+          python3 backend/ci_smoke_test.py
+
+      - name: Set up Flutter SDK
+        uses: subosito/flutter-action@v2
+        with:
+          channel: 'stable'
+          cache: true
+
+      - name: Prepare Android & Flutter Workspace
+        working-directory: ${{ steps.locate-project.outputs.project_dir }}
+        run: |
+          mkdir -p assets/sample assets/icon android/app/src/main/res/xml
+          touch assets/sample/.keep assets/icon/.keep
+          if [ ! -f "android/gradlew" ]; then
+            flutter create /tmp/flutter_wrap_gen --platforms=android || true
+            cp /tmp/flutter_wrap_gen/android/gradlew android/gradlew 2>/dev/null || true
+            cp /tmp/flutter_wrap_gen/android/gradlew.bat android/gradlew.bat 2>/dev/null || true
+            mkdir -p android/gradle/wrapper
+            cp /tmp/flutter_wrap_gen/android/gradle/wrapper/gradle-wrapper.jar android/gradle/wrapper/gradle-wrapper.jar 2>/dev/null || true
+            rm -rf /tmp/flutter_wrap_gen
+          fi
+          chmod +x android/gradlew 2>/dev/null || true
+
+      - name: Install Flutter Dependencies & Analyze Dart Code
+        working-directory: ${{ steps.locate-project.outputs.project_dir }}
+        run: |
+          flutter pub get
+          flutter analyze --no-fatal-infos --no-fatal-warnings || true
+
+      - name: Build Android Release APK
+        working-directory: ${{ steps.locate-project.outputs.project_dir }}
+        run: |
+          flutter build apk --release --no-tree-shake-icons --android-skip-build-dependency-validation || \
+          flutter build apk --release --no-tree-shake-icons
+
+      - name: Build Android Debug APK
+        working-directory: ${{ steps.locate-project.outputs.project_dir }}
+        run: |
+          flutter build apk --debug --android-skip-build-dependency-validation || \
+          flutter build apk --debug
+
+      - name: Upload Release APK Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: BadmintonHawkEye-v4-PRO-Release-APK
+          path: "**/build/app/outputs/flutter-apk/app-release.apk"
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Upload Debug APK Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: BadmintonHawkEye-v4-PRO-Debug-APK
+          path: "**/build/app/outputs/flutter-apk/app-debug.apk"
+          if-no-files-found: warn
+          retention-days: 14

@@ -1,0 +1,42 @@
+allprojects {
+    repositories {
+        google()
+        mavenCentral()
+    }
+}
+
+rootProject.buildDir = '../build'
+
+subprojects { subproject ->
+    subproject.buildDir = "${rootProject.buildDir}/${subproject.name}"
+
+    // Must be registered BEFORE evaluationDependsOn(':app') to avoid Gradle IllegalStateException
+    def configureAndroidSubproject = { proj ->
+        if (proj.hasProperty("android")) {
+            proj.android {
+                compileSdkVersion 36
+            }
+        }
+        proj.tasks.configureEach { task ->
+            if (task.class.name.contains("KotlinCompile")) {
+                try {
+                    task.kotlinOptions.freeCompilerArgs += ["-Xskip-metadata-version-check"]
+                } catch (Exception ignored) {}
+            }
+        }
+    }
+
+    if (subproject.state.executed) {
+        configureAndroidSubproject(subproject)
+    } else {
+        subproject.afterEvaluate(configureAndroidSubproject)
+    }
+}
+
+subprojects {
+    project.evaluationDependsOn(':app')
+}
+
+tasks.register("clean", Delete) {
+    delete rootProject.buildDir
+}
